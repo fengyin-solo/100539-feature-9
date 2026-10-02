@@ -68,4 +68,10 @@ npm run build
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
+- 出土物清单交库房的导出走 `local-service.ts` 里的 `exportFindEntries`：按当前筛选条件导出，
+  列与列表同源（`find` 模块的 `fields`，含器物编号、出土层位、完残程度、最大尺寸），文件名
+  `出土物登记清单-YYYYMMDD.csv`；同一天重复导出通过 File System Access API 覆盖同一个文件，
+  不支持的浏览器退回普通下载。导出前按 `FIND_NUMBER_PATTERN` 校验器物编号格式，未通过的记录
+  在同一文件的「导出失败记录」区单列（编号不合法的不进清单），可修正后再导一遍；导出只校验、
+  不改号，编号规则调整只改 `FIND_NUMBER_PATTERN` 与 `FIND_NUMBER_RULE_TEXT`。
 - 想回到初始数据：清掉浏览器里 `archaeology-field:entries` 这一项，或调用 `resetModule(模块)`。
