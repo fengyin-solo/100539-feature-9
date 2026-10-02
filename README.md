@@ -68,4 +68,7 @@ npm run build
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
+- 出土物清单导出走 `frontend/src/api/find-export.ts`：按当前筛选结果出表，文件名带日期；
+  导出前校验器物编号（历史编号规则继续有效，既有编号不换号），未通过的记录单独列出、可单独再导；
+  相同内容重复导出只留一份文件，没有匹配记录时导出说明文件而不是空表。
 - 想回到初始数据：清掉浏览器里 `archaeology-field:entries` 这一项，或调用 `resetModule(模块)`。

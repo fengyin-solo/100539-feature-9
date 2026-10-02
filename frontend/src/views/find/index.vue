@@ -33,6 +33,11 @@
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
     </form>
 
+    <p v-if="exportMessage" class="export-message">
+      {{ exportMessage }}
+      <button v-if="duplicatePlan" class="link" type="button" @click="forceDownload">仍要重新下载</button>
+    </p>
+
     <table class="data-table">
       <thead>
         <tr>
@@ -63,6 +68,30 @@
       </tbody>
     </table>
 
+    <section v-if="failedRows.length" class="failed-panel">
+      <h3>编号校验未通过（{{ failedRows.length }} 条）</h3>
+      <p class="panel-desc">
+        以下记录未写入本次导出文件，修正器物编号后重新导出即可；也可以先单独导出这份名单核对。
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in columns" :key="column">{{ column }}</th>
+            <th>当前状态</th>
+            <th>未通过原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in failedRows" :key="String(item.row.id)">
+            <td v-for="column in columns" :key="column">{{ item.row[column] ?? '—' }}</td>
+            <td>{{ item.row.status }}</td>
+            <td>{{ item.reason }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <button class="btn" type="button" @click="exportFailedRows">单独导出未通过记录</button>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条出土物登记记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -74,7 +103,12 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
-  downloadEntries,
+  deliverExport,
+  planFailedFindExport,
+  planFindExport,
+} from '@/api/find-export'
+import type { FailedRow, FindExportPlan } from '@/api/find-export'
+import {
   listEntries,
   moduleMeta,
   runAction as applyAction,
@@ -90,6 +124,9 @@ const stats = [{"label": "待登记器物", "value": 0}, {"label": "已编目器
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const exportMessage = ref('')
+const failedRows = ref<FailedRow[]>([])
+const duplicatePlan = ref<FindExportPlan | null>(null)
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -99,13 +136,74 @@ const statusSummary = computed(() =>
   })),
 )
 
+function resetExportFeedback() {
+  exportMessage.value = ''
+  failedRows.value = []
+  duplicatePlan.value = null
+}
+
 function resetFilters() {
   filters.value = {}
   reload()
 }
 
 function exportRows() {
-  downloadEntries(meta.key)
+  errorMessage.value = ''
+  resetExportFeedback()
+  // 先按当前筛选条件刷新列表，导出的就是列表里这一批，两处内容保持一致
+  reload()
+  if (errorMessage.value) {
+    return
+  }
+  const plan = planFindExport(rows.value, filters.value, columns)
+  failedRows.value = plan.failed
+  if (plan.matched === 0) {
+    const outcome = deliverExport(plan)
+    if (outcome.downloaded) {
+      exportMessage.value = `当前筛选没有匹配到记录，已导出说明文件 ${outcome.filename}`
+    } else {
+      duplicatePlan.value = plan
+      exportMessage.value = `相同条件的说明文件已于 ${outcome.exportedAt} 导出（${outcome.filename}），未重复生成`
+    }
+    return
+  }
+  if (plan.exported === 0) {
+    exportMessage.value = `匹配到 ${plan.matched} 条记录，但器物编号校验均未通过，未生成清单文件；已在下方单独列出`
+    return
+  }
+  const outcome = deliverExport(plan)
+  if (outcome.downloaded) {
+    exportMessage.value = plan.failed.length
+      ? `已导出 ${plan.exported} 条（${outcome.filename}）；${plan.failed.length} 条编号校验未通过，已在下方单独列出`
+      : `已导出 ${plan.exported} 条，文件 ${outcome.filename}`
+  } else {
+    duplicatePlan.value = plan
+    exportMessage.value = `相同内容的清单已于 ${outcome.exportedAt} 导出为 ${outcome.filename}，未重复生成文件`
+  }
+}
+
+function exportFailedRows() {
+  errorMessage.value = ''
+  exportMessage.value = ''
+  duplicatePlan.value = null
+  const plan = planFailedFindExport(failedRows.value, columns)
+  const outcome = deliverExport(plan)
+  if (outcome.downloaded) {
+    exportMessage.value = `已单独导出 ${plan.exported} 条校验未通过记录（${outcome.filename}）`
+  } else {
+    duplicatePlan.value = plan
+    exportMessage.value = `相同内容的未通过记录清单已于 ${outcome.exportedAt} 导出（${outcome.filename}），未重复生成`
+  }
+}
+
+function forceDownload() {
+  if (!duplicatePlan.value) {
+    return
+  }
+  const plan = duplicatePlan.value
+  deliverExport(plan, { force: true })
+  duplicatePlan.value = null
+  exportMessage.value = `已重新下载 ${plan.filename}，内容与之前导出的一致`
 }
 
 function openCreate() {
@@ -124,6 +222,7 @@ function runAction(action: string, row: EntryRow) {
 
 function reload() {
   errorMessage.value = ''
+  resetExportFeedback()
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
